@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>50 States Flag Colors Clustering</title>
+  <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .cluster-list { display: flex; gap: 40px; margin-top: 40px; }
+    .cluster { border: 1px solid #ccc; padding: 10px; border-radius: 8px; min-width: 200px; }
+    .state-item { display: flex; align-items: center; margin-bottom: 8px; }
+    .state-item img { width: 32px; height: 20px; object-fit: cover; margin-right: 8px; border: 1px solid #ddd; border-radius: 3px; }
+    h2 { margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <h1>50 States Flag Colors Clustering</h1>
+  <div id="plot" style="width: 800px; height: 600px;"></div>
+  <h2>States by Cluster</h2>
+  <div class="cluster-list" id="clusters"></div>
+  <script>
+    // K-means implementation in JS
+    function kmeans(data, k, maxIter=100) {
+      // data: [{avg_rgb: [r,g,b], ...}]
+      // Randomly initialize centroids
+      let centroids = [];
+      for (let i = 0; i < k; i++) {
+        centroids.push(data[Math.floor(Math.random() * data.length)].avg_rgb.slice());
+      }
+      let assignments = new Array(data.length).fill(0);
+      for (let iter = 0; iter < maxIter; iter++) {
+        // Assign points
+        for (let i = 0; i < data.length; i++) {
+          let minDist = Infinity, minIdx = 0;
+          for (let j = 0; j < k; j++) {
+            let d = Math.sqrt(
+              Math.pow(data[i].avg_rgb[0] - centroids[j][0], 2) +
+              Math.pow(data[i].avg_rgb[1] - centroids[j][1], 2) +
+              Math.pow(data[i].avg_rgb[2] - centroids[j][2], 2)
+            );
+            if (d < minDist) { minDist = d; minIdx = j; }
+          }
+          assignments[i] = minIdx;
+        }
+        // Update centroids
+        let sums = Array(k).fill().map(() => [0,0,0]);
+        let counts = Array(k).fill(0);
+        for (let i = 0; i < data.length; i++) {
+          let c = assignments[i];
+          sums[c][0] += data[i].avg_rgb[0];
+          sums[c][1] += data[i].avg_rgb[1];
+          sums[c][2] += data[i].avg_rgb[2];
+          counts[c]++;
+        }
+        for (let j = 0; j < k; j++) {
+          if (counts[j] > 0) {
+            centroids[j] = [sums[j][0]/counts[j], sums[j][1]/counts[j], sums[j][2]/counts[j]];
+          }
+        }
+      }
+      return {assignments, centroids};
+    }
+
+    async function loadData() {
+      const response = await fetch('flags_data.json');
+      return await response.json();
+    }
+
+    function rgbToHex(r, g, b) {
+      r = Math.round(r * 255);
+      g = Math.round(g * 255);
+      b = Math.round(b * 255);
+      return '#' + [r,g,b].map(x => x.toString(16).padStart(2, '0')).join('');
+    }
+
+    function plotClusters(data, assignments, centroids) {
+      const colors = ['#e41a1c','#377eb8','#4daf4a','#ff7f00'];
+      let traces = [];
+      // Points
+      for (let c = 0; c < centroids.length; c++) {
+        let clusterPoints = data.filter((_,i) => assignments[i] === c);
+        traces.push({
+          x: clusterPoints.map(d => d.avg_rgb[0]),
+          y: clusterPoints.map(d => d.avg_rgb[1]),
+          z: clusterPoints.map(d => d.avg_rgb[2]),
+          text: clusterPoints.map(d => d.state),
+          mode: 'markers',
+          type: 'scatter3d',
+          name: `Cluster ${c+1}`,
+          marker: { size: 6, color: colors[c] }
+        });
+      }
+      // Centroids
+      traces.push({
+        x: centroids.map(c => c[0]),
+        y: centroids.map(c => c[1]),
+        z: centroids.map(c => c[2]),
+        mode: 'markers',
+        type: 'scatter3d',
+        name: 'Centroids',
+        marker: { size: 14, color: colors, symbol: 'diamond' }
+      });
+      // Lines from points to centroids
+      for (let i = 0; i < data.length; i++) {
+        let c = assignments[i];
+        traces.push({
+          x: [data[i].avg_rgb[0], centroids[c][0]],
+          y: [data[i].avg_rgb[1], centroids[c][1]],
+          z: [data[i].avg_rgb[2], centroids[c][2]],
+          mode: 'lines',
+          type: 'scatter3d',
+          line: { color: colors[c], width: 2 },
+          showlegend: false
+        });
+      }
+      Plotly.newPlot('plot', traces, {
+        margin: {l:0, r:0, b:0, t:0},
+        scene: {
+          xaxis: {title: 'Red'},
+          yaxis: {title: 'Green'},
+          zaxis: {title: 'Blue'}
+        }
+      });
+    }
+
+    function renderClusters(data, assignments, k) {
+      const clustersDiv = document.getElementById('clusters');
+      clustersDiv.innerHTML = '';
+      for (let c = 0; c < k; c++) {
+        let clusterPoints = data.filter((_,i) => assignments[i] === c);
+        let html = `<div class="cluster"><h3>Cluster ${c+1}</h3>`;
+        for (let d of clusterPoints) {
+          html += `<div class="state-item"><img src="${d.thumbnail}" alt="${d.state}"><span>${d.state}</span></div>`;
+        }
+        html += '</div>';
+        clustersDiv.innerHTML += html;
+      }
+    }
+
+    loadData().then(data => {
+      const k = 4;
+      const {assignments, centroids} = kmeans(data, k);
+      plotClusters(data, assignments, centroids);
+      renderClusters(data, assignments, k);
+    });
+  </script>
+</body>
+</html>
